@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-echo "🚀 Iniciando setup do sistema..."
+echo "🚀 Iniciando setup do sistema (workstation)..."
 
 #######################################
 # 1. DETECÇÃO DO SISTEMA
@@ -14,114 +14,95 @@ else
 fi
 
 IS_ARCH=false
-if [[ "$ID" = "arch" || "$ID_LIKE" == *"arch"* ]]; then
+IS_FEDORA=false
+
+if [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "cachyos" ]]; then
   IS_ARCH=true
+fi
+
+if [[ "$ID" == "fedora" ]]; then
+  IS_FEDORA=true
 fi
 
 echo "🖥 Sistema detectado: $NAME ($ID)"
 
 #######################################
-# 2. ARCH: INSTALAÇÃO DO YAY
+# 2. PACOTES BASE
 #######################################
 if $IS_ARCH; then
-  echo "🐧 Sistema baseado em Arch"
-
-  if command -v yay >/dev/null 2>&1; then
-    echo "✔ yay já instalado"
-  else
-    echo "📦 Instalando yay..."
-    sudo pacman -S --needed --noconfirm base-devel git
-
-    TMP_DIR=$(mktemp -d)
-    git clone https://aur.archlinux.org/yay.git "$TMP_DIR/yay"
-    cd "$TMP_DIR/yay"
-    makepkg -si --noconfirm
-    cd ~
-    rm -rf "$TMP_DIR"
-  fi
-else
-  echo "ℹ Não é Arch, pulando yay"
+  sudo pacman -S --needed --noconfirm \
+    git curl flatpak zsh tmux bat ufw
+elif $IS_FEDORA; then
+  sudo dnf install -y \
+    git curl flatpak zsh tmux bat firewalld
 fi
 
 #######################################
-# 3. ARCH: PACOTES AUR
+# 3. YAY (ARCH)
+#######################################
+if $IS_ARCH && ! command -v yay >/dev/null; then
+  echo "📦 Instalando yay..."
+  sudo pacman -S --needed --noconfirm base-devel
+  git clone https://aur.archlinux.org/yay.git /tmp/yay
+  (cd /tmp/yay && makepkg -si --noconfirm)
+  rm -rf /tmp/yay
+fi
+
+#######################################
+# 4. PACOTES ARCH (OFICIAIS)
 #######################################
 if $IS_ARCH; then
-  echo "📦 Instalando pacotes AUR..."
-
-  YAY_PACKAGES=(
-    ufw
-    zsh
-    fuse2
-    docker
-    docker-buildx
-    docker-compose
-    powerdevil
-    power-profiles-daemon
-    spectacle
-    gwenview
-    okular
-    filelight
-    kalk
-    partitionmanager
-    google-chrome
-    tmux
-    alacritty
-    goverlay
-    mangohud
-    visual-studio-code-bin
-    bat
-  )
-
-  yay -S --needed --noconfirm "${YAY_PACKAGES[@]}"
+  yay -S --needed --noconfirm \
+    docker docker-buildx docker-compose \
+    fuse2 okular partitionmanager kclock
 fi
 
 #######################################
-# 4. STARSHIP (UNIVERSAL)
+# 5. AUR CONTROLADO (APENAS ESTES)
 #######################################
-if ! command -v starship >/dev/null 2>&1; then
-  echo "✨ Instalando Starship..."
-  curl -sS https://starship.rs/install.sh | sh -s -- -y
-else
-  echo "✔ Starship já instalado"
+if $IS_ARCH; then
+  yay -S --needed --noconfirm \
+    google-chrome \
+    visual-studio-code-bin \
+    jetbrains-toolbox
 fi
 
 #######################################
-# 5. MISE (UNIVERSAL)
+# 6. DOCKER
 #######################################
-if ! command -v mise >/dev/null 2>&1; then
-  echo "🔧 Instalando mise..."
-  curl https://mise.run/zsh | sh
-else
-  echo "✔ mise já instalado"
-fi
-
-#######################################
-# 6. DOCKER (UNIVERSAL)
-#######################################
-echo "🐳 Configurando Docker (se instalado)..."
-
-if command -v docker >/dev/null 2>&1; then
-  sudo systemctl enable --now docker.service || true
-  sudo systemctl enable containerd.service || true
-
-  if ! getent group docker >/dev/null; then
-    sudo groupadd docker
+if ! command -v docker >/dev/null; then
+  if $IS_FEDORA; then
+    echo "🐳 Instalando Docker (Fedora)..."
+    sudo dnf config-manager addrepo \
+      --from-repofile https://download.docker.com/linux/fedora/docker-ce.repo
+    sudo dnf install -y \
+      docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin
   fi
+fi
 
-  sudo usermod -aG docker "$USER"
+sudo systemctl enable --now docker || true
+sudo usermod -aG docker "$USER" || true
 
-  echo "✔ Docker configurado"
-  echo "➡ Logout/login ou execute: newgrp docker"
+#######################################
+# 7. FIREWALL (APENAS LOCALSEND)
+#######################################
+if $IS_FEDORA; then
+  echo "🔥 Configurando firewalld (LocalSend)..."
+  sudo systemctl enable --now firewalld || true
+  sudo firewall-cmd --permanent --add-port=53317/tcp
+  sudo firewall-cmd --permanent --add-port=53317/udp
+  sudo firewall-cmd --reload
 else
-  echo "ℹ Docker não encontrado, pulando configuração"
+  echo "🔥 Configurando ufw (LocalSend)..."
+  sudo systemctl enable --now ufw || true
+  sudo ufw allow from 192.168.0.0/16 to any port 53317
+  sudo ufw --force enable
 fi
 
 #######################################
-# 7. FLATPAK + FLATHUB (UNIVERSAL)
+# 8. FLATPAK + FLATHUB
 #######################################
-echo "📦 Configurando Flatpak..."
-
 if ! flatpak remote-list | grep -q flathub; then
   sudo flatpak remote-add --if-not-exists flathub \
     https://flathub.org/repo/flathub.flatpakrepo
@@ -130,37 +111,76 @@ fi
 FLATPAKS=(
   app.zen_browser.zen
   com.bitwarden.desktop
-  com.discordapp.Discord
   com.getpostman.Postman
   com.github.IsmaelMartinez.teams_for_linux
-  com.heroicgameslauncher.hgl
   com.obsproject.Studio
-  com.rtosta.zapzap
   com.spotify.Client
-  com.valvesoftware.Steam
-  io.ente.auth
   md.obsidian.Obsidian
-  me.iepure.devtoolbox
   org.gimp.GIMP
-  org.libretro.RetroArch
   org.localsend.localsend_app
   org.videolan.VLC
+  org.qbittorrent.qBittorrent
 )
 
-echo "📦 Instalando Flatpaks..."
+if ! $IS_FEDORA && ! command -v libreoffice >/dev/null; then
+  FLATPAKS+=(org.libreoffice.LibreOffice)
+fi
+
 for app in "${FLATPAKS[@]}"; do
-  if flatpak list --app --columns=application | grep -qx "$app"; then
-    echo "✔ $app já instalado"
-  else
-    sudo flatpak install -y flathub "$app"
-  fi
+  flatpak install -y flathub "$app" || true
 done
 
 #######################################
-# 8. FINAL
+# 9. STARSHIP
 #######################################
-echo "🔄 Atualizando Flatpaks..."
+if ! command -v starship >/dev/null; then
+  curl -sS https://starship.rs/install.sh | sh -s -- -y
+fi
+
+#######################################
+# 10. MISE
+#######################################
+if ! command -v mise >/dev/null; then
+  curl https://mise.run/zsh | sh
+fi
+
+#######################################
+# 11. ZSH + OH-MY-ZSH + ZINIT
+#######################################
+if [ "$SHELL" != "$(which zsh)" ]; then
+  chsh -s "$(which zsh)"
+fi
+
+ZSHRC="$HOME/.zshrc"
+
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+  RUNZSH=no sh -c \
+    "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+fi
+
+if ! grep -q zinit "$ZSHRC"; then
+  git clone https://github.com/zdharma-continuum/zinit \
+    ~/.local/share/zinit/zinit.git
+
+  cat <<'EOF' >>"$ZSHRC"
+
+# ---- ZINIT ----
+source ~/.local/share/zinit/zinit.git/zinit.zsh
+zinit light zsh-users/zsh-autosuggestions
+zinit light zsh-users/zsh-completions
+
+# ---- MISE ----
+eval "$(mise activate zsh)"
+
+# ---- STARSHIP ----
+eval "$(starship init zsh)"
+EOF
+fi
+
+#######################################
+# FINAL
+#######################################
 flatpak update -y
 
 echo "✅ Setup finalizado com sucesso!"
-echo "⚠ Algumas mudanças exigem logout/login (Docker, grupos)"
+echo "⚠ Faça logout/login para aplicar ZSH e grupo Docker"
