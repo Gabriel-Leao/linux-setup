@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-echo "🚀 Iniciando setup do sistema (workstation)..."
+echo "🚀 Iniciando setup do sistema (Arch-based workstation)..."
 
 #######################################
 # 1. DETECÇÃO DO SISTEMA
@@ -13,92 +13,66 @@ else
   exit 1
 fi
 
-IS_ARCH=false
-IS_FEDORA=false
-
-if [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "cachyos" ]]; then
-  IS_ARCH=true
-fi
-
-if [[ "$ID" == "fedora" ]]; then
-  IS_FEDORA=true
+if [[ "$ID" != "arch" && "$ID_LIKE" != *"arch"* && "$ID" != "cachyos" ]]; then
+  echo "❌ Este script é exclusivo para Arch Linux e derivados"
+  exit 1
 fi
 
 echo "🖥 Sistema detectado: $NAME ($ID)"
 
 #######################################
-# 2. PACOTES BASE
+# 2. PACOTES BASE (ARCH)
 #######################################
-if $IS_ARCH; then
-  sudo pacman -S --needed --noconfirm \
-    git curl flatpak zsh tmux bat ufw
-elif $IS_FEDORA; then
-  sudo dnf install -y \
-    git curl flatpak zsh tmux bat firewalld
-fi
+sudo pacman -S --needed --noconfirm \
+  git curl flatpak zsh tmux bat ufw base-devel
 
 #######################################
-# 3. YAY (ARCH)
+# 3. PARU (AUR HELPER)
 #######################################
-if $IS_ARCH && ! command -v yay >/dev/null; then
-  echo "📦 Instalando yay..."
-  sudo pacman -S --needed --noconfirm base-devel
-  git clone https://aur.archlinux.org/yay.git /tmp/yay
-  (cd /tmp/yay && makepkg -si --noconfirm)
-  rm -rf /tmp/yay
+if ! command -v paru >/dev/null; then
+  echo "📦 Paru não encontrado. Instalando..."
+
+  TMP_DIR="/tmp/paru"
+  rm -rf "$TMP_DIR"
+  git clone https://aur.archlinux.org/paru.git "$TMP_DIR"
+
+  (
+    cd "$TMP_DIR"
+    makepkg -si --noconfirm
+  )
+else
+  echo "✅ Paru já instalado"
 fi
 
 #######################################
 # 4. PACOTES ARCH (OFICIAIS)
 #######################################
-if $IS_ARCH; then
-  yay -S --needed --noconfirm \
-    docker docker-buildx docker-compose \
-    fuse2 okular partitionmanager kclock
-fi
+paru -S --needed --noconfirm \
+  docker docker-buildx docker-compose \
+  fuse2 okular partitionmanager kclock libreoffice-fresh
 
 #######################################
-# 5. AUR CONTROLADO (APENAS ESTES)
+# 5. AUR CONTROLADO
 #######################################
-if $IS_ARCH; then
-  yay -S --needed --noconfirm \
-    google-chrome \
-    visual-studio-code-bin \
-    jetbrains-toolbox
-fi
+paru -S --needed --noconfirm \
+  google-chrome \
+  visual-studio-code-bin \
+  jetbrains-toolbox \
+  linuxtoys-bin
 
 #######################################
 # 6. DOCKER
 #######################################
-if ! command -v docker >/dev/null; then
-  if $IS_FEDORA; then
-    echo "🐳 Instalando Docker (Fedora)..."
-    sudo dnf config-manager addrepo \
-      --from-repofile https://download.docker.com/linux/fedora/docker-ce.repo
-    sudo dnf install -y \
-      docker-ce docker-ce-cli containerd.io \
-      docker-buildx-plugin docker-compose-plugin
-  fi
-fi
-
-sudo systemctl enable --now docker || true
-sudo usermod -aG docker "$USER" || true
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
 
 #######################################
-# 7. FIREWALL (APENAS LOCALSEND)
+# 7. FIREWALL (LocalSend)
 #######################################
-if $IS_FEDORA; then
-  echo "🔥 Configurando firewalld (LocalSend)..."
-  sudo systemctl enable --now firewalld || true
-  sudo firewall-cmd --permanent --add-port=53317/tcp
-  sudo firewall-cmd --permanent --add-port=53317/udp
-  sudo firewall-cmd --reload
-else
-  echo "🔥 Configurando ufw (LocalSend)..."
-  sudo systemctl enable --now ufw || true
-  sudo ufw allow from 192.168.0.0/16 to any port 53317
-  sudo ufw --force enable
-fi
+sudo systemctl enable --now ufw
+sudo ufw allow 53317/tcp
+sudo ufw allow 53317/udp
+sudo ufw --force enable
 
 #######################################
 # 8. FLATPAK + FLATHUB
@@ -111,41 +85,49 @@ fi
 FLATPAKS=(
   app.zen_browser.zen
   com.bitwarden.desktop
+  com.discordapp.Discord
   com.getpostman.Postman
   com.github.IsmaelMartinez.teams_for_linux
-  com.obsproject.Studio
+  com.rtosta.zapzap
   com.spotify.Client
+  io.ente.auth
   md.obsidian.Obsidian
+  me.iepure.devtoolbox
   org.gimp.GIMP
+  org.libretro.RetroArch
   org.localsend.localsend_app
-  org.videolan.VLC
-  org.qbittorrent.qBittorrent
+  org.gtk.Gtk3theme.Breeze-Dark
 )
-
-if ! $IS_FEDORA && ! command -v libreoffice >/dev/null; then
-  FLATPAKS+=(org.libreoffice.LibreOffice)
-fi
 
 for app in "${FLATPAKS[@]}"; do
   flatpak install -y flathub "$app" || true
 done
 
 #######################################
-# 9. STARSHIP
+# 9. FLATPAK OVERRIDES (THEME FIXES)
+#######################################
+echo "🎨 Aplicando overrides de tema Flatpak..."
+
+flatpak override --user \
+  --env=GTK_THEME=Breeze-Dark \
+  org.localsend.localsend_app
+
+#######################################
+# 10. STARSHIP
 #######################################
 if ! command -v starship >/dev/null; then
   curl -sS https://starship.rs/install.sh | sh -s -- -y
 fi
 
 #######################################
-# 10. MISE
+# 11. MISE
 #######################################
 if ! command -v mise >/dev/null; then
   curl https://mise.run/zsh | sh
 fi
 
 #######################################
-# 11. ZSH + OH-MY-ZSH + ZINIT
+# 12. ZSH + OH-MY-ZSH + ZINIT
 #######################################
 if [ "$SHELL" != "$(which zsh)" ]; then
   chsh -s "$(which zsh)"
