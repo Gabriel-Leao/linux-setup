@@ -1,52 +1,149 @@
-# 🛠 Arch Workstation Setup Script
+# Linux Setup — Arch Linux & CachyOS
 
-Script de **setup automatizado** para configurar uma **workstation baseada em Arch Linux** (Arch puro ou CachyOS).
+Este repositório contém meu ambiente Linux totalmente reproduzível, baseado em dois scripts:
 
-O objetivo é automatizar a instalação de ferramentas essenciais usando **Pacman, AUR (paru) e Flatpak**, além de configurar **Docker, ZSH, firewall (UFW)** e resolver problemas comuns de **tema escuro em apps Flatpak GTK no KDE**.
+- setup.sh → provisionamento do sistema
+- scripts/sync-dotfiles.sh → aplicação segura dos dotfiles
 
----
-
-## ✅ Sistemas suportados
+Compatível somente com:
 
 - Arch Linux
 - CachyOS
 
-❌ **Não suporta outras distribuições**
+Qualquer outro sistema é bloqueado automaticamente.
 
 ---
 
-## 📦 O que este script instala e configura
+## Objetivo
 
-### 🔧 Pacotes base (Pacman)
+Ter um ambiente:
 
-- git
-- curl
-- flatpak
-- zsh
-- tmux
-- bat
-- ufw
-- base-devel
+- Reprodutível
+- Modular
+- Seguro
+- Declarativo
+- Com dry-run global
+- Com dotfiles versionados
+
+Formatou o sistema → rodou os scripts → ambiente restaurado.
 
 ---
 
-### 🧩 AUR (via paru)
+## Estrutura do projeto
 
-O script verifica se o **paru** já está instalado (CachyOS já vem com ele).
-Caso não esteja, ele é instalado automaticamente a partir do AUR.
+```
+linux-setup/
+├── configs/
+│ ├── .gitconfig
+│ ├── .zshrc
+│ ├── .tmux.conf
+│ ├── alacritty.toml
+│ ├── MangoHud.conf
+│ └── starship.toml
+│
+├── scripts/
+│ └── sync-dotfiles.sh
+│
+├── setup.sh
+└── .env.example
+```
 
-#### Pacotes oficiais (Arch)
+---
+
+# setup.sh
+
+Script principal de provisionamento do sistema.
+
+## Funções principais
+
+- Detecta Arch ou CachyOS
+- Detecta KDE Plasma
+- Instala pacotes base
+- Instala Paru
+- Instala pacotes Arch e KDE
+- Instala pacotes AUR
+- Instala Flatpaks
+- Configura Docker e UFW
+- Instala stack de games
+- Instala Starship
+- Instala Mise
+- Configura Java e Node
+- Aplica dotfiles
+- Configura ZSH
+- Suporte completo a dry-run
+
+---
+
+## Uso
+
+./setup.sh [flags]
+
+---
+
+## Flags
+
+--arch Instala pacotes Arch  
+--aur Instala pacotes AUR  
+--flatpak Instala Flatpaks  
+--docker Configura Docker e firewall  
+--games Instala pacotes de games  
+--sync-dotfiles Aplica dotfiles
+
+--java <versão> Configura Java via Mise  
+--node <versão> Configura Node via Mise
+
+--dry-run Simula tudo (nada é executado)  
+-h, --help Mostra ajuda
+
+Caso não seja passada nenhuma flag, o script roda tudo
+
+---
+
+## Exemplos
+
+Configuração completa:
+
+./setup.sh
+
+Simulação:
+
+./setup.sh --arch --aur --dry-run
+
+---
+
+## Execução crítica
+
+Sempre executado:
+
+- install_base_packages
+- install_paru
+
+Se falhar → script aborta.
+
+---
+
+## Pacotes Arch
+
+Base:
 
 - docker
 - docker-buildx
 - docker-compose
+- fuse2
+- libreoffice-fresh
+- obs-studio
+- qbittorrent
+
+KDE:
+
 - okular
 - partitionmanager
 - kclock
-- libreoffice-fresh
-- fuse2
+- discover
 
-#### Pacotes AUR
+---
+
+## Pacotes AUR
 
 - google-chrome
 - visual-studio-code-bin
@@ -55,210 +152,140 @@ Caso não esteja, ele é instalado automaticamente a partir do AUR.
 
 ---
 
-### 🐳 Docker
+## Flatpaks
 
-- Ativa e inicia o serviço Docker
-- Adiciona o usuário atual ao grupo `docker`
-
-⚠️ É necessário **logout/login** após a execução para usar Docker sem `sudo`.
-
----
-
-### 🔥 Firewall (UFW)
-
-- Ativa o `ufw`
-- Libera a porta **53317 TCP/UDP**, utilizada pelo **LocalSend**
-
----
-
-### 📦 Flatpak + Flathub
-
-- Adiciona o repositório **Flathub**
-- Instala os seguintes aplicativos Flatpak:
-
-  - Zen Browser
-  - Bitwarden
-  - Discord
-  - Postman
-  - Teams for Linux
-  - ZapZap
-  - Spotify
-  - Ente Auth
-  - Obsidian
-  - Dev Toolbox
-  - GIMP
-  - RetroArch
-  - LocalSend
-  - GTK Breeze Dark Theme
+- Zen Browser
+- Bitwarden
+- Discord
+- Postman
+- Teams for Linux
+- ZapZap
+- Spotify
+- Ente Auth
+- Obsidian
+- Devtoolbox
+- GIMP
+- RetroArch
+- Localsend
 
 ---
 
-### 🎨 Correção de tema (KDE + Flatpak)
+## Games
 
-Alguns aplicativos GTK Flatpak (como o **LocalSend**) não respeitam o tema escuro no KDE.
+Base:
 
-O script aplica o seguinte override:
+- hydra-launcher-bin
+- gamemode
 
-```bash
-flatpak override --user --env=GTK_THEME=Breeze-Dark org.localsend.localsend_app
-```
+Arch:
 
-Isso força o **Breeze Dark apenas para o LocalSend**, sem afetar outros aplicativos Flatpak.
+- heroic-games-launcher-bin
+- mangohud
+- goverlay
+- steam
+
+CachyOS:
+
+- cachyos-gaming-meta
 
 ---
 
-## 🐚 ZSH, Mise e Produtividade
+## Docker
 
-O script configura um ambiente de shell moderno e produtivo.
+- Ativa serviço
+- Adiciona usuário ao grupo docker
+- Configura UFW
 
-### O que é instalado
+Logout/login é necessário após execução.
 
-- ZSH como shell padrão
+---
+
+## Shell
+
+- ZSH como padrão
 - Oh My Zsh
-- Zinit (gerenciador de plugins)
-- Starship (prompt)
-- **Mise** (gerenciador de runtimes)
+- Zinit
+
+O .zshrc é controlado somente pelos dotfiles.
 
 ---
 
-### 🔍 Como o Mise funciona no script
+## Mise
 
-O **Mise** é usado para gerenciar runtimes como **Java** e **Node.js**.
+Gerencia runtimes:
 
-Durante a execução do script:
+- Java
+- Node
 
-- O Mise é **instalado automaticamente**, se ainda não existir
-- Ele é **ativado explicitamente dentro do script**, usando:
+Exemplo:
 
-```bash
-eval "$(mise activate bash)"
-```
-
-- Isso garante que comandos como `mise use -g` funcionem **durante a execução do script**
-- O script **não depende do `.zshrc`** para que o Mise funcione no setup
-
-Após a execução:
-
-- O script adiciona ao `~/.zshrc`:
-
-```bash
-eval "$(mise activate zsh)"
-```
-
-- Isso garante que o Mise esteja ativo em **todas as sessões futuras do ZSH**
-
-📌 **Resumo importante**
-O Mise:
-
-- é ativado no **script** para funcionar durante o setup
-- é ativado no **ZSH** para funcionar no uso diário
+./setup.sh --java 21 --node 20
 
 ---
 
-### ☕ Node.js e Java via flags
+# sync-dotfiles.sh
 
-O script aceita flags para instalar versões específicas de runtimes.
-
-Exemplos:
-
-```bash
-./setup.sh --java 21
-```
-
-Instala e define globalmente:
-
-```bash
-mise use -g java@21
-```
-
-```bash
-./setup.sh --node 24
-```
-
-Instala e define globalmente:
-
-```bash
-mise use -g node@24
-```
-
-Também é possível usar ambos:
-
-```bash
-./setup.sh --java 21 --node 24
-```
+Script de aplicação segura dos dotfiles.
 
 ---
 
-## ▶️ Como usar
+## O que faz
 
-### 1️⃣ Clone o repositório
-
-```bash
-git clone https://github.com/seu-usuario/seu-repo.git
-cd seu-repo
-```
-
----
-
-### 2️⃣ Dê permissão de execução ao script
-
-```bash
-chmod +x setup.sh
-```
+- Cria backup automático .bak
+- Só substitui arquivos se houver mudança
+- Suporte a dry-run
+- Interpola .gitconfig via .env
+- Não sobrescreve sem backup
 
 ---
 
-### 3️⃣ Execute o script
+## Uso
 
-Setup completo:
-
-```bash
-./setup.sh --all
-```
-
-Setup completo com runtimes:
-
-```bash
-./setup.sh --all --java 21 --node 24
-```
-
-Apenas shell + runtimes:
-
-```bash
-./setup.sh --shell --java 21 --node 24
-```
-
-Ver ajuda:
-
-```bash
-./setup.sh --help
-```
+scripts/sync-dotfiles.sh  
+scripts/sync-dotfiles.sh --dry-run
 
 ---
 
-## ⚠️ Observações importantes
+## Arquivos aplicados
 
-- O script utiliza `sudo` e solicitará sua senha
-- Pode ser executado **mais de uma vez** (idempotente)
-- Após a execução, faça **logout/login** para aplicar:
-
-  - ZSH como shell padrão
-  - Permissões do Docker
-
----
-
-## 📂 Estrutura do projeto
-
-```text
-.
-├── setup.sh
-├── README.md
-└── LICENSE
-```
+~/.gitconfig  
+~/.zshrc  
+~/.tmux.conf  
+~/.config/alacritty/alacritty.toml  
+~/.config/MangoHud/MangoHud.conf  
+~/.config/starship.toml
 
 ---
 
-## 📄 Licença
+## .env
 
-Este projeto está licenciado sob a **MIT License**.
-Consulte o arquivo `LICENSE` para mais detalhes.
+Arquivo opcional:
+
+GIT_NAME="Seu Nome"
+
+GIT_EMAIL="Seu_email"
+
+---
+
+## Fluxo após formatar
+
+git clone <repo> linux-setup
+cd linux-setup
+chmod +x setup.sh scripts/sync-dotfiles.sh
+./setup.sh --arch --aur --flatpak --docker --games --sync-dotfiles
+
+---
+
+## Avisos
+
+- Não execute como root
+- Logout/login pode ser necessário
+- Dry-run não executa nada
+- Alguns Flatpaks podem falhar em dry-run
+
+---
+
+## Autor
+
+Gabriel Leão  
+Ambiente Linux pessoal totalmente automatizado

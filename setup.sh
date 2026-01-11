@@ -26,8 +26,7 @@ DO_FLATPAK=false
 DO_DOCKER=false
 DO_GAMES=false
 DO_ALL=false
-DO_BACKUP_KDE=false
-DO_APPLY_DOTFILES=false
+DO_SYNC_DOTFILES=false
 
 SHOW_HELP=false
 DRY_RUN=false
@@ -106,37 +105,13 @@ run_pipe() {
 }
 
 #######################################
-# FUNÇÕES DE BACKUP/APPLY (COMO FUNÇÕES)
+# FUNÇÕES DE SYNC DOTFILES
 #######################################
-backup_kde() {
-  if ! $IS_KDE; then
-    warn "KDE não detectado para backup"
-    return 1
-  fi
-  
-  log "Executando backup KDE..."
-  local args=()
-  [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
-  run bash scripts/backup-kde.sh "${args[@]}" || warn "Backup KDE falhou"
-}
-
 sync_dotfiles() {
   log "Aplicando dotfiles..."
   local args=()
   [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
   run bash scripts/sync-dotfiles.sh "${args[@]}" || warn "Dotfiles falhou"
-}
-
-restore_kde() {
-  if ! $IS_KDE; then
-    warn "KDE não detectado para apply"
-    return 1
-  fi
-  
-  log "Aplicando configurações KDE..."
-  local args=()
-  [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
-  run bash scripts/restore-kde.sh "${args[@]}" || warn "KDE configs falhou"
 }
 
 #######################################
@@ -200,10 +175,32 @@ setup_shell() {
 #######################################
 install_arch_packages() {
   log "Instalando pacotes oficiais do Arch..."
-  run paru -S --needed --noconfirm \
-    docker docker-buildx docker-compose \
-    fuse2 okular partitionmanager kclock \
-    libreoffice-fresh obs-studio qbittorrent discover || warn "Alguns pacotes Arch falharam"
+
+  BASE_PACKAGES=(
+    docker
+    docker-buildx
+    docker-compose
+    fuse2
+    libreoffice-fresh
+    obs-studio
+    qbittorrent
+  )
+
+  KDE_PACKAGES=(
+    okular
+    partitionmanager
+    kclock
+    discover
+  )
+
+  PACKAGES=("${BASE_PACKAGES[@]}")
+
+  if [[ "$IS_KDE" == true ]]; then
+    PACKAGES+=("${KDE_PACKAGES[@]}")
+  fi
+
+  run paru -S --needed --noconfirm "${PACKAGES[@]}" \
+    || warn "Alguns pacotes Arch falharam"
 }
 
 #######################################
@@ -249,18 +246,33 @@ enable_multilib() {
 install_games_packages() {
   log "Instalando pacotes para games..."
 
+  BASE_GAMES_PACKAGES=(
+    hydra-launcher-bin
+    gamemode
+  )
+
+  ARCH_GAMES_PACKAGES=(
+    heroic-games-launcher-bin
+    mangohud
+    goverlay
+    steam
+  )
+
+  CACHY_EXTRA_PACKAGES=(
+    cachyos-gaming-meta
+  )
+
+  PACKAGES=("${BASE_GAMES_PACKAGES[@]}")
+
   if $IS_ARCH; then
     enable_multilib || warn "Falha ao habilitar multilib para games"
-    run paru -S --needed --noconfirm \
-      hydra-launcher-bin \
-      heroic-games-launcher-bin \
-      gamemode mangohud goverlay \
-      steam || warn "Alguns pacotes de games falharam (Arch)"
+    PACKAGES+=("${ARCH_GAMES_PACKAGES[@]}")
   elif $IS_CACHY; then
-    run paru -S --needed --noconfirm \
-      cachyos-gaming-meta \
-      hydra-launcher-bin gamemode || warn "Alguns pacotes de games falharam (CachyOS)"
+    PACKAGES+=("${CACHY_EXTRA_PACKAGES[@]}")
   fi
+
+  run paru -S --needed --noconfirm "${PACKAGES[@]}" \
+    || warn "Alguns pacotes de games falharam"
 }
 
 #######################################
@@ -278,10 +290,10 @@ setup_docker() {
 #######################################
 setup_firewall() {
   log "Configurando UFW com regras seguras..."
-  run sudo ufw --force reset          # Limpa configs antigas
+  run sudo ufw --force reset
   run sudo ufw default deny incoming
   run sudo ufw default allow outgoing
-  run sudo ufw allow ssh              # Essencial
+  run sudo ufw allow ssh
   run sudo ufw allow 53317/tcp
   run sudo ufw allow 53317/udp
   run sudo ufw --force enable
@@ -310,16 +322,11 @@ install_flatpak_apps() {
     org.gimp.GIMP
     org.libretro.RetroArch
     org.localsend.localsend_app
-    org.gtk.Gtk3theme.Breeze
   )
 
   for app in "${FLATPAKS[@]}"; do
     run flatpak install -y flathub "$app" || warn "Falha ao instalar Flatpak: $app"
   done
-
-  run flatpak override --user \
-    --env=GTK_THEME=Breeze-Dark \
-    org.localsend.localsend_app || warn "Override do Localsend falhou"
 }
 
 #######################################
@@ -368,9 +375,7 @@ Uso: $SCRIPT_NAME [flags]
 --node <ver>    Configura Node
 
 🔄 OPERAÇÕES DE BACKUP/DOTFILES:
---backup-kde    Backup KDE configs
---apply-dotfiles Aplica dotfiles
---apply-kde     Aplica configs KDE
+--sync-dotfiles Aplica dotfiles
 
 --dry-run       MODO TESTE (NADA É EXECUTADO)
 -h, --help
@@ -393,8 +398,7 @@ main() {
       --flatpak) DO_FLATPAK=true ;;
       --docker) DO_DOCKER=true ;;
       --games) DO_GAMES=true ;;
-      --backup-kde) DO_BACKUP_KDE=true ;;
-      --apply-dotfiles) DO_APPLY_DOTFILES=true ;;
+      --sync-dotfiles) DO_SYNC_DOTFILES=true ;;
       --java)
         [[ -z "${2:-}" ]] && { err "--java requer versão"; exit 1; }
         JAVA_VERSION="$2"; shift ;;
@@ -409,9 +413,7 @@ main() {
   done
 
   $SHOW_HELP && usage
-
-  $DO_BACKUP_KDE      && backup_kde
-  $DO_APPLY_DOTFILES  && sync_dotfiles
+  $DO_SYNC_DOTFILES  && sync_dotfiles
 
   # CRÍTICO: Para se qualquer um falhar
   install_base_packages
@@ -430,7 +432,6 @@ main() {
     configure_mise_runtimes
     sync_dotfiles
     setup_shell
-    $IS_KDE && restore_kde
   fi
 
   run flatpak update -y || warn "Flatpak update falhou"
