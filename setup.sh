@@ -1,168 +1,443 @@
 #!/usr/bin/env bash
-set -e
-
-echo "🚀 Iniciando setup do sistema (Arch-based workstation)..."
+set -uo pipefail
 
 #######################################
-# 1. DETECÇÃO DO SISTEMA
+# PROTEÇÃO
 #######################################
-if [ -f /etc/os-release ]; then
+[[ "$EUID" -eq 0 ]] && { echo "❌ Não execute como root."; exit 1; }
+
+#######################################
+# VARIÁVEIS GLOBAIS
+#######################################
+SCRIPT_NAME="$(basename "$0")"
+TMP_DIR="/tmp/paru"
+
+JAVA_VERSION=""
+NODE_VERSION=""
+
+# Variáveis de sistema - usadas em múltiplas funções
+IS_ARCH=false
+IS_CACHY=false
+IS_KDE=false
+
+DO_ARCH=false
+DO_AUR=false
+DO_FLATPAK=false
+DO_DOCKER=false
+DO_GAMES=false
+DO_ALL=false
+DO_BACKUP_KDE=false
+DO_APPLY_DOTFILES=false
+
+SHOW_HELP=false
+DRY_RUN=false
+
+#######################################
+# LOGGING
+#######################################
+log()  { echo -e "➡️  $*"; }
+ok()   { echo -e "✅ $*"; }
+warn() { echo -e "⚠️  $*"; }
+err()  { echo -e "❌ $*" >&2; exit 1; }
+
+#######################################
+# DETECÇÃO DO SISTEMA (ESTRITA + USO EXPLÍCITO)
+#######################################
+detect_system() {
+  [[ ! -f /etc/os-release ]] && {
+    err "Arquivo /etc/os-release não encontrado. Abortando."
+  }
+  
   . /etc/os-release
-else
-  echo "❌ Não foi possível detectar o sistema"
-  exit 1
-fi
 
-if [[ "$ID" != "arch" && "$ID_LIKE" != *"arch"* && "$ID" != "cachyos" ]]; then
-  echo "❌ Este script é exclusivo para Arch Linux e derivados"
-  exit 1
-fi
+  if [[ "$ID" == "arch" ]]; then
+    IS_ARCH=true
+    ok "Sistema Arch Linux detectado: $PRETTY_NAME"
+  elif [[ "$ID" == "cachyos" ]]; then
+    IS_CACHY=true
+    ok "Sistema CachyOS detectado: $PRETTY_NAME"
+  else
+    err "❌ SISTEMA NÃO SUPORTADO: $PRETTY_NAME ($ID)"
+    err "Este script executa APENAS em Arch Linux ou CachyOS"
+    err "Seu sistema: $NAME $VERSION"
+    exit 1
+  fi
 
-echo "🖥 Sistema detectado: $NAME ($ID)"
+  if $IS_ARCH; then
+    log "Modo Arch ativado"
+  elif $IS_CACHY; then
+    log "Modo CachyOS ativado"
+  fi
+
+  if [[ "${XDG_CURRENT_DESKTOP:-}" =~ KDE|Plasma ]] || \
+     [[ "${DESKTOP_SESSION:-}" =~ plasma ]]; then
+    IS_KDE=true
+    ok "Desktop: KDE Plasma"
+  else
+    warn "Desktop não é KDE ($XDG_CURRENT_DESKTOP)"
+  fi
+}
 
 #######################################
-# 2. PACOTES BASE (ARCH)
+# DRY-RUN WRAPPER (GLOBAL)
 #######################################
-sudo pacman -S --needed --noconfirm \
-  git curl flatpak zsh tmux bat ufw base-devel
+run() {
+  if [[ "$DRY_RUN" == true ]]; then
+    log "[dry-run] $*"
+    return 0
+  else
+    "$@"
+    local status=$?
+    [[ $status -eq 0 ]] || warn "Falhou (mas continuando): $* (exit code: $status)"
+    return $status
+  fi
+}
+
+run_pipe() {
+  if [[ "$DRY_RUN" == true ]]; then
+    log "[dry-run] $*"
+    return 0
+  else
+    bash -c "$*"
+    local status=$?
+    [[ $status -eq 0 ]] || warn "Falhou (mas continuando): $* (exit code: $status)"
+    return $status
+  fi
+}
 
 #######################################
-# 3. PARU (AUR HELPER)
+# FUNÇÕES DE BACKUP/APPLY (COMO FUNÇÕES)
 #######################################
-if ! command -v paru >/dev/null; then
-  echo "📦 Paru não encontrado. Instalando..."
+backup_kde() {
+  if ! $IS_KDE; then
+    warn "KDE não detectado para backup"
+    return 1
+  fi
+  
+  log "Executando backup KDE..."
+  local args=()
+  [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
+  run bash scripts/backup-kde.sh "${args[@]}" || warn "Backup KDE falhou"
+}
 
-  TMP_DIR="/tmp/paru"
-  rm -rf "$TMP_DIR"
-  git clone https://aur.archlinux.org/paru.git "$TMP_DIR"
+sync_dotfiles() {
+  log "Aplicando dotfiles..."
+  local args=()
+  [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
+  run bash scripts/sync-dotfiles.sh "${args[@]}" || warn "Dotfiles falhou"
+}
+
+restore_kde() {
+  if ! $IS_KDE; then
+    warn "KDE não detectado para apply"
+    return 1
+  fi
+  
+  log "Aplicando configurações KDE..."
+  local args=()
+  [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
+  run bash scripts/restore-kde.sh "${args[@]}" || warn "KDE configs falhou"
+}
+
+#######################################
+# PACOTES BASE (CRÍTICO)
+#######################################
+install_base_packages() {
+  log "Instalando pacotes base..."
+  sudo pacman -S --needed --noconfirm \
+    git curl flatpak zsh tmux bat ufw base-devel \
+    || err "❌ FALHA CRÍTICA: Não foi possível instalar pacotes base"
+}
+
+#######################################
+# PARU (CRÍTICO)
+#######################################
+install_paru() {
+  command -v paru &>/dev/null && { ok "Paru já instalado"; return 0; }
+
+  log "Instalando Paru (CRÍTICO)..."
+  run rm -rf "$TMP_DIR" || err "Falha ao limpar $TMP_DIR"
+  run git clone https://aur.archlinux.org/paru.git "$TMP_DIR" \
+    || err "❌ FALHA CRÍTICA: Não foi possível clonar Paru"
 
   (
-    cd "$TMP_DIR"
-    makepkg -si --noconfirm
+    cd "$TMP_DIR" || err "Falha ao entrar em $TMP_DIR"
+    run makepkg -si --noconfirm \
+      || err "❌ FALHA CRÍTICA: Não foi possível compilar/instalar Paru"
   )
-else
-  echo "✅ Paru já instalado"
-fi
+  
+  command -v paru &>/dev/null || err "❌ FALHA CRÍTICA: Paru não está funcional"
+  ok "Paru instalado com sucesso"
+}
 
 #######################################
-# 4. PACOTES ARCH (OFICIAIS)
+# SHELL (CRÍTICO - SEM EDITAR .zshrc)
 #######################################
-paru -S --needed --noconfirm \
-  docker docker-buildx docker-compose \
-  fuse2 okular partitionmanager kclock libreoffice-fresh
+setup_shell() {
+  log "Configurando ZSH (sem editar .zshrc)..."
 
-#######################################
-# 5. AUR CONTROLADO
-#######################################
-paru -S --needed --noconfirm \
-  google-chrome \
-  visual-studio-code-bin \
-  jetbrains-toolbox \
-  linuxtoys-bin
+  local current_shell
+  current_shell="$(getent passwd "$USER" | cut -d: -f7 | tr -d '\n')"
 
-#######################################
-# 6. DOCKER
-#######################################
-sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"
+  [[ "$current_shell" == "$(command -v zsh)" ]] || \
+    run chsh -s "$(command -v zsh)" || err "❌ FALHA CRÍTICA: Não foi possível mudar shell para ZSH"
 
-#######################################
-# 7. FIREWALL (LocalSend)
-#######################################
-sudo systemctl enable --now ufw
-sudo ufw allow 53317/tcp
-sudo ufw allow 53317/udp
-sudo ufw --force enable
+  [[ -d "$HOME/.oh-my-zsh" ]] || {
+    run_pipe 'RUNZSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"' \
+      || err "❌ FALHA CRÍTICA: Não foi possível instalar Oh My Zsh"
+  }
+
+  [[ -d "$HOME/.local/share/zinit/zinit.git" ]] || {
+    run git clone https://github.com/zdharma-continuum/zinit "$HOME/.local/share/zinit/zinit.git" \
+      || err "❌ FALHA CRÍTICA: Não foi possível instalar Zinit"
+  }
+
+  ok "ZSH + Oh My Zsh + Zinit instalados (dotfiles configuram .zshrc)"
+}
 
 #######################################
-# 8. FLATPAK + FLATHUB
+# PACOTES ARCH
 #######################################
-if ! flatpak remote-list | grep -q flathub; then
-  sudo flatpak remote-add --if-not-exists flathub \
-    https://flathub.org/repo/flathub.flatpakrepo
-fi
-
-FLATPAKS=(
-  app.zen_browser.zen
-  com.bitwarden.desktop
-  com.discordapp.Discord
-  com.getpostman.Postman
-  com.github.IsmaelMartinez.teams_for_linux
-  com.rtosta.zapzap
-  com.spotify.Client
-  io.ente.auth
-  md.obsidian.Obsidian
-  me.iepure.devtoolbox
-  org.gimp.GIMP
-  org.libretro.RetroArch
-  org.localsend.localsend_app
-  org.gtk.Gtk3theme.Breeze-Dark
-)
-
-for app in "${FLATPAKS[@]}"; do
-  flatpak install -y flathub "$app" || true
-done
+install_arch_packages() {
+  log "Instalando pacotes oficiais do Arch..."
+  run paru -S --needed --noconfirm \
+    docker docker-buildx docker-compose \
+    fuse2 okular partitionmanager kclock \
+    libreoffice-fresh obs-studio qbittorrent discover || warn "Alguns pacotes Arch falharam"
+}
 
 #######################################
-# 9. FLATPAK OVERRIDES (THEME FIXES)
+# PACOTES AUR
 #######################################
-echo "🎨 Aplicando overrides de tema Flatpak..."
-
-flatpak override --user \
-  --env=GTK_THEME=Breeze-Dark \
-  org.localsend.localsend_app
-
-#######################################
-# 10. STARSHIP
-#######################################
-if ! command -v starship >/dev/null; then
-  curl -sS https://starship.rs/install.sh | sh -s -- -y
-fi
+install_aur_packages() {
+  log "Instalando pacotes AUR..."
+  run paru -S --needed --noconfirm \
+    google-chrome \
+    visual-studio-code-bin \
+    jetbrains-toolbox \
+    linuxtoys-bin || warn "Alguns pacotes AUR falharam"
+}
 
 #######################################
-# 11. MISE
+# MULTILIB
 #######################################
-if ! command -v mise >/dev/null; then
-  curl https://mise.run/zsh | sh
-fi
+enable_multilib() {
+  local pacman_conf="/etc/pacman.conf"
+
+  grep -q '^\[multilib\]' "$pacman_conf" 2>/dev/null && {
+    ok "multilib já habilitado"
+    return 0
+  }
+
+  grep -q '^\#\[multilib\]' "$pacman_conf" 2>/dev/null || {
+    warn "Bloco [multilib] não encontrado em $pacman_conf"
+    return 1
+  }
+
+  log "Habilitando multilib (apenas Arch)..."
+  run sudo sed -i \
+    -e 's/^#\[multilib\]/[multilib]/' \
+    -e 's|^#Include = /etc/pacman.d/mirrorlist|Include = /etc/pacman.d/mirrorlist|' \
+    "$pacman_conf" || warn "Falha ao editar pacman.conf"
+
+  run sudo pacman -Sy || warn "Falha ao sincronizar repositórios após multilib"
+}
 
 #######################################
-# 12. ZSH + OH-MY-ZSH + ZINIT
+# GAMES
 #######################################
-if [ "$SHELL" != "$(which zsh)" ]; then
-  chsh -s "$(which zsh)"
-fi
+install_games_packages() {
+  log "Instalando pacotes para games..."
 
-ZSHRC="$HOME/.zshrc"
+  if $IS_ARCH; then
+    enable_multilib || warn "Falha ao habilitar multilib para games"
+    run paru -S --needed --noconfirm \
+      hydra-launcher-bin \
+      heroic-games-launcher-bin \
+      gamemode mangohud goverlay \
+      steam || warn "Alguns pacotes de games falharam (Arch)"
+  elif $IS_CACHY; then
+    run paru -S --needed --noconfirm \
+      cachyos-gaming-meta \
+      hydra-launcher-bin gamemode || warn "Alguns pacotes de games falharam (CachyOS)"
+  fi
+}
 
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-  RUNZSH=no sh -c \
-    "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-fi
+#######################################
+# DOCKER
+#######################################
+setup_docker() {
+  log "Configurando Docker..."
+  run sudo systemctl enable --now docker || warn "Falha ao iniciar Docker"
+  run sudo usermod -aG docker "$USER" || warn "Falha ao adicionar usuário ao grupo docker"
+  warn "IMPORTANTE: Faça logout/login para Docker funcionar"
+}
 
-if ! grep -q zinit "$ZSHRC"; then
-  git clone https://github.com/zdharma-continuum/zinit \
-    ~/.local/share/zinit/zinit.git
+#######################################
+# FIREWALL
+#######################################
+setup_firewall() {
+  log "Configurando UFW com regras seguras..."
+  run sudo ufw --force reset          # Limpa configs antigas
+  run sudo ufw default deny incoming
+  run sudo ufw default allow outgoing
+  run sudo ufw allow ssh              # Essencial
+  run sudo ufw allow 53317/tcp
+  run sudo ufw allow 53317/udp
+  run sudo ufw --force enable
+}
 
-  cat <<'EOF' >>"$ZSHRC"
+#######################################
+# FLATPAK
+#######################################
+install_flatpak_apps() {
+  log "Configurando Flatpak..."
 
-# ---- ZINIT ----
-source ~/.local/share/zinit/zinit.git/zinit.zsh
-zinit light zsh-users/zsh-autosuggestions
-zinit light zsh-users/zsh-completions
+  run sudo flatpak remote-add --if-not-exists flathub \
+    https://flathub.org/repo/flathub.flatpakrepo || warn "Falha ao adicionar Flathub"
 
-# ---- MISE ----
-eval "$(mise activate zsh)"
+  local FLATPAKS=(
+    app.zen_browser.zen
+    com.bitwarden.desktop
+    com.discordapp.Discord
+    com.getpostman.Postman
+    com.github.IsmaelMartinez.teams_for_linux
+    com.rtosta.zapzap
+    com.spotify.Client
+    io.ente.auth
+    md.obsidian.Obsidian
+    me.iepure.devtoolbox
+    org.gimp.GIMP
+    org.libretro.RetroArch
+    org.localsend.localsend_app
+    org.gtk.Gtk3theme.Breeze
+  )
 
-# ---- STARSHIP ----
-eval "$(starship init zsh)"
+  for app in "${FLATPAKS[@]}"; do
+    run flatpak install -y flathub "$app" || warn "Falha ao instalar Flatpak: $app"
+  done
+
+  run flatpak override --user \
+    --env=GTK_THEME=Breeze-Dark \
+    org.localsend.localsend_app || warn "Override do Localsend falhou"
+}
+
+#######################################
+# STARSHIP
+#######################################
+install_starship() {
+  command -v starship &>/dev/null && { ok "Starship já instalado"; return 0; }
+  log "Instalando Starship..."
+  run_pipe "curl -sS https://starship.rs/install.sh | sh -s -- -y" || warn "Falha ao instalar Starship"
+}
+
+#######################################
+# MISE
+#######################################
+install_mise() {
+  if ! command -v mise &>/dev/null; then
+    log "Instalando Mise..."
+    run_pipe "curl https://mise.run/zsh | sh" || warn "Falha ao instalar Mise"
+  fi
+}
+
+#######################################
+# JAVA / NODE
+#######################################
+configure_mise_runtimes() {
+  [[ -z "$JAVA_VERSION" && -z "$NODE_VERSION" ]] && return 0
+  install_mise
+
+  [[ -n "$JAVA_VERSION" ]] && run mise use -g "java@$JAVA_VERSION" || warn "Falha Java $JAVA_VERSION"
+  [[ -n "$NODE_VERSION" ]] && run mise use -g "node@$NODE_VERSION" || warn "Falha Node $NODE_VERSION"
+}
+
+#######################################
+# USAGE (ATUALIZADO)
+#######################################
+usage() {
+  cat <<EOF
+Uso: $SCRIPT_NAME [flags]
+
+--arch          Instala pacotes Arch
+--aur           Instala pacotes AUR  
+--flatpak       Instala Flatpaks
+--docker        Configura Docker
+--games         Instala pacotes games
+--java <ver>    Configura Java
+--node <ver>    Configura Node
+
+🔄 OPERAÇÕES DE BACKUP/DOTFILES:
+--backup-kde    Backup KDE configs
+--apply-dotfiles Aplica dotfiles
+--apply-kde     Aplica configs KDE
+
+--dry-run       MODO TESTE (NADA É EXECUTADO)
+-h, --help
+
+ATENÇÃO: Executa APENAS em Arch Linux e CachyOS
 EOF
-fi
+  exit 0
+}
 
 #######################################
-# FINAL
+# MAIN (ATUALIZADO)
 #######################################
-flatpak update -y
+main() {
+  detect_system
 
-echo "✅ Setup finalizado com sucesso!"
-echo "⚠ Faça logout/login para aplicar ZSH e grupo Docker"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --arch) DO_ARCH=true ;;
+      --aur) DO_AUR=true ;;
+      --flatpak) DO_FLATPAK=true ;;
+      --docker) DO_DOCKER=true ;;
+      --games) DO_GAMES=true ;;
+      --backup-kde) DO_BACKUP_KDE=true ;;
+      --apply-dotfiles) DO_APPLY_DOTFILES=true ;;
+      --java)
+        [[ -z "${2:-}" ]] && { err "--java requer versão"; exit 1; }
+        JAVA_VERSION="$2"; shift ;;
+      --node)
+        [[ -z "${2:-}" ]] && { err "--node requer versão"; exit 1; }
+        NODE_VERSION="$2"; shift ;;
+      --dry-run) DRY_RUN=true; log "🚫 MODO DRY-RUN ATIVADO - NADA SERÁ EXECUTADO" ;;
+      -h|--help) SHOW_HELP=true ;;
+      *) err "Flag desconhecida: $1" ;;
+    esac
+    shift
+  done
+
+  $SHOW_HELP && usage
+
+  $DO_BACKUP_KDE      && backup_kde
+  $DO_APPLY_DOTFILES  && sync_dotfiles
+
+  # CRÍTICO: Para se qualquer um falhar
+  install_base_packages
+  install_paru
+
+  # OPCIONAL: Continua mesmo se falhar
+  ($DO_ALL || $DO_ARCH)    && install_arch_packages
+  ($DO_ALL || $DO_AUR)     && install_aur_packages
+  ($DO_ALL || $DO_FLATPAK) && install_flatpak_apps
+  ($DO_ALL || $DO_DOCKER)  && setup_docker && setup_firewall
+  ($DO_ALL || $DO_GAMES)   && install_games_packages
+
+  if [[ "$DO_ALL" == true ]]; then
+    install_starship
+    install_mise
+    configure_mise_runtimes
+    sync_dotfiles
+    setup_shell
+    $IS_KDE && restore_kde
+  fi
+
+  run flatpak update -y || warn "Flatpak update falhou"
+
+  ok "✅ Setup finalizado com sucesso!"
+  [[ "$DRY_RUN" != true ]] && warn "⚠️  Alguns passos podem ter falhado - verifique os warnings acima"
+  warn "🔄 Logout/login pode ser necessário para algumas mudanças"
+}
+
+main "$@"
