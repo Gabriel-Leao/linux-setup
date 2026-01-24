@@ -314,14 +314,17 @@ install_flatpak_apps() {
     com.discordapp.Discord
     com.getpostman.Postman
     com.github.IsmaelMartinez.teams_for_linux
+    com.heroicgameslauncher.hgl
     com.rtosta.zapzap
     com.spotify.Client
+    com.valvesoftware.Steam
     io.ente.auth
     md.obsidian.Obsidian
     me.iepure.devtoolbox
     org.gimp.GIMP
     org.libretro.RetroArch
     org.localsend.localsend_app
+    org.videolan.VLC
   )
 
   for app in "${FLATPAKS[@]}"; do
