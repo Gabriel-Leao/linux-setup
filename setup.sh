@@ -180,10 +180,6 @@ install_arch_packages() {
     docker
     docker-buildx
     docker-compose
-    fuse2
-    libreoffice-fresh
-    obs-studio
-    qbittorrent
   )
 
   KDE_PACKAGES=(
@@ -209,7 +205,6 @@ install_arch_packages() {
 install_aur_packages() {
   log "Instalando pacotes AUR..."
   run paru -S --needed --noconfirm \
-    google-chrome \
     visual-studio-code-bin \
     jetbrains-toolbox \
     linuxtoys-bin || warn "Alguns pacotes AUR falharam"
@@ -314,16 +309,18 @@ install_flatpak_apps() {
     com.discordapp.Discord
     com.getpostman.Postman
     com.github.IsmaelMartinez.teams_for_linux
-    com.heroicgameslauncher.hgl
+    com.google.Chrome
+    com.obsproject.Studio
     com.rtosta.zapzap
     com.spotify.Client
-    com.valvesoftware.Steam
     io.ente.auth
     md.obsidian.Obsidian
     me.iepure.devtoolbox
     org.gimp.GIMP
     org.libretro.RetroArch
     org.localsend.localsend_app
+    org.mozilla.Thunderbird
+    org.qbittorrent.qBittorrent
     org.videolan.VLC
   )
 
