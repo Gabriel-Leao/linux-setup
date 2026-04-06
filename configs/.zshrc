@@ -2,8 +2,26 @@ export ZSH="$HOME/.oh-my-zsh"
 plugins=(git)
 source $ZSH/oh-my-zsh.sh
 
-alias update="paru -Syu"
-alias clean="paru -Rns $(pacman -Qdtq)"
+# Detect OS
+case "$(uname -s)" in
+  Darwin)
+    alias update="brew update && brew upgrade && brew autoremove && brew cleanup"
+    ;;
+  Linux)
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      # WSL
+      alias update="sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y"
+    else
+      # Arch / CachyOS
+      alias update="paru -Syu && paru -Rns $(pacman -Qdtq 2>/dev/null)"
+    fi
+    ;;
+esac
+
+#Programing
+alias cat="bat --theme=\$(defaults read -globalDomain AppleInterfaceStyle &> /dev/null && echo default || echo GitHub)"
+alias ls="eza --color=always --long --git --no-filesize --icons=always --no-time --no-user --no-permissions"
+alias cd="z"
 
 ### Added by Zinit's installer
 if [[ ! -f $HOME/.local/share/zinit/zinit.git/zinit.zsh ]]; then
@@ -32,8 +50,17 @@ zinit light-mode for \
 
 ### End of Zinit's installer chunk
 
-eval "$(/home/leao/.local/bin/mise activate zsh)"
 eval "$(starship init zsh)"
+eval "$(mise activate zsh)"
+eval "$(zoxide init zsh)"
+source <(fzf --zsh)
+
+export FZF_CTRL_T_OPTS="
+ --style full
+ --walker-skip .git,node_modules,target
+ --preview 'bat -n --color=always {}'
+ --bind 'ctrl-/:change-preview-window(down|hidden|)'
+"
 
 # --- mise Java ---
 export JAVA_HOME="$(dirname "$(dirname "$(mise which java)")")"

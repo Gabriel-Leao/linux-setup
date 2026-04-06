@@ -1,15 +1,20 @@
-add_newline = true
+add_newline = false
 
 [character]
 success_symbol = '[➜ ](bold green)'
+error_symbol = '[✗ ](bold red)'
 
 [package]
 disabled = true
 
+[container]
+format = "[$symbol]($style) "
+
 [java]
 symbol = " "
 style = "bold yellow"
+format = "via [$symbol($version )]($style)"
 
 [nodejs]
 symbol = " "
-style = "bold green"
+format = "[$symbol$version]($style) "
